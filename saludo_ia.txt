@@ -1,0 +1,10 @@
+Hola! Tengo un sistema de tickets en Python/Flask 100% funcional que necesito [TU OBJETIVO]. 
+
+Tengo documentación completa del proyecto. El sistema incluye: login multi-usuario, CRUD tickets, archivos adjuntos drag&drop, vista detallada, comentarios, estados, dashboard estadísticas, todo funcionando en Flask + SQLite + Bootstrap 5.
+
+Usuarios de prueba: admin, juan.perez, carlos.dev (todos funcionando).
+Archivos: app_simple.py + templates/ + tickets.db
+
+Necesito ayuda específicamente con: [compilar a .exe / integrar Google Drive / configurar emails / etc.]
+
+¿Me ayudas con [tu objetivo específico]?

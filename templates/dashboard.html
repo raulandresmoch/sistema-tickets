@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Sistema de Tickets</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .ticket-card {
+            border-left: 4px solid #007bff;
+            transition: transform 0.2s;
+            margin-bottom: 15px;
+        }
+        .ticket-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .priority-high { border-left-color: #dc3545; }
+        .priority-medium { border-left-color: #ffc107; }
+        .priority-low { border-left-color: #28a745; }
+        .priority-critical { border-left-color: #6f42c1; }
+        
+        .status-abierto { background-color: #fff3cd; }
+        .status-en-progreso { background-color: #d1ecf1; }
+        .status-resuelto { background-color: #d4edda; }
+        
+        .navbar-brand {
+            font-weight: bold;
+        }
+        
+        .stats-card {
+            border-radius: 10px;
+            border: none;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-ticket-alt"></i> Sistema de Tickets
+            </a>
+            <div class="navbar-nav ms-auto">
+                {% if user.username == 'admin' %}
+                    <a class="nav-link me-3" href="/admin">
+                        <i class="fas fa-cogs"></i> Admin
+                    </a>
+                {% endif %}
+                <span class="navbar-text me-3">
+                    <i class="fas fa-user"></i> {{ user.username }}
+                    {% if user.is_developer %}
+                        <span class="badge bg-success ms-1">Desarrollador</span>
+                    {% endif %}
+                </span>
+                <a class="nav-link" href="/logout">
+                    <i class="fas fa-sign-out-alt"></i> Salir
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <!-- Mensajes Flash -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ 'danger' if category == 'error' else 'warning' if category == 'warning' else 'info' if category == 'info' else 'success' }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- Header del Dashboard -->
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>
+                <i class="fas fa-tachometer-alt"></i> Dashboard
+            </h2>
+            <a href="/new_ticket" class="btn btn-primary">
+                <i class="fas fa-plus"></i> Nuevo Ticket
+            </a>
+        </div>
+
+        <!-- Estadísticas -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card stats-card bg-primary text-white">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <i class="fas fa-ticket-alt fa-2x me-3"></i>
+                            <div>
+                                <h6 class="card-title mb-0">Total Tickets</h6>
+                                <h3 class="mb-0">{{ stats.total_tickets }}</h3>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stats-card bg-warning text-white">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <i class="fas fa-clock fa-2x me-3"></i>
+                            <div>
+                                <h6 class="card-title mb-0">Abiertos</h6>
+                                <h3 class="mb-0">{{ stats.open_tickets }}</h3>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stats-card bg-info text-white">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <i class="fas fa-cog fa-2x me-3"></i>
+                            <div>
+                                <h6 class="card-title mb-0">En Progreso</h6>
+                                <h3 class="mb-0">{{ stats.in_progress_tickets }}</h3>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stats-card bg-success text-white">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <i class="fas fa-check fa-2x me-3"></i>
+                            <div>
+                                <h6 class="card-title mb-0">Resueltos</h6>
+                                <h3 class="mb-0">{{ stats.resolved_tickets }}</h3>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lista de Tickets -->
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-list"></i> Tickets</h5>
+                {% if user.is_developer %}
+                <small class="text-muted">Vista de desarrollador - Todos los tickets</small>
+                {% else %}
+                <small class="text-muted">Mis tickets</small>
+                {% endif %}
+            </div>
+            <div class="card-body">
+                {% if tickets %}
+                    {% for ticket in tickets %}
+                    <div class="card ticket-card priority-{{ ticket[4].lower() }} status-{{ ticket[5].lower().replace(' ', '-') }}">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <strong>
+                                <a href="/view_ticket/{{ ticket[0] }}" class="text-decoration-none text-dark">
+                                    #{{ ticket[0] }} - {{ ticket[1] }}
+                                </a>
+                            </strong>
+                            <div>
+                                <span class="badge bg-{{ 'success' if ticket[5] == 'Resuelto' else 'warning' if ticket[5] == 'En Progreso' else 'secondary' }}">
+                                    {{ ticket[5] }}
+                                </span>
+                                <span class="badge bg-{{ 'danger' if ticket[4] == 'Critical' else 'warning' if ticket[4] == 'High' else 'info' if ticket[4] == 'Medium' else 'secondary' }} ms-1">
+                                    {{ ticket[4] }}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <p class="card-text">{{ ticket[2][:150] }}{% if ticket[2]|length > 150 %}...{% endif %}</p>
+                            
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <small><strong>Categoría:</strong> {{ ticket[3] }}</small><br>
+                                    <small><strong>Usuario:</strong> {{ ticket[12] or 'N/A' }}</small>
+                                </div>
+                                <div class="col-md-6">
+                                    <small><strong>Creado:</strong> {{ ticket[8] }}</small><br>
+                                    <small><strong>Asignado:</strong> {{ ticket[13] or 'Sin asignar' }}</small>
+                                </div>
+                            </div>
+                            
+                            {% if ticket[11] %}
+                            <div class="mt-2">
+                                <small><strong>Archivos adjuntos:</strong></small>
+                                {% set attachments = ticket[11]|from_json %}
+                                {% if attachments %}
+                                    {% for attachment in attachments %}
+                                    <a href="/download_attachment/{{ ticket[0] }}/{{ attachment }}" class="badge bg-light text-dark ms-1 text-decoration-none" title="Descargar {{ attachment }}">
+                                        <i class="fas fa-paperclip"></i> {{ attachment.split('_', 2)[-1] if '_' in attachment else attachment }}
+                                    </a>
+                                    {% endfor %}
+                                {% endif %}
+                            </div>
+                            {% endif %}
+                            
+                            <!-- Controles para desarrolladores -->
+                            {% if user.is_developer and ticket[5] != 'Resuelto' %}
+                            <hr>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div class="btn-group btn-group-sm">
+                                    {% if ticket[5] == 'Abierto' %}
+                                    <button class="btn btn-outline-primary" onclick="updateTicket({{ ticket[0] }}, 'En Progreso')">
+                                        <i class="fas fa-play"></i> Tomar
+                                    </button>
+                                    {% endif %}
+                                    
+                                    {% if ticket[5] == 'En Progreso' %}
+                                    <button class="btn btn-outline-success" onclick="updateTicket({{ ticket[0] }}, 'Resuelto')">
+                                        <i class="fas fa-check"></i> Resolver
+                                    </button>
+                                    {% endif %}
+                                </div>
+                                
+                                <small class="text-muted">
+                                    {% if ticket[9] != ticket[8] %}
+                                    Actualizado: {{ ticket[9] }}
+                                    {% endif %}
+                                </small>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
+                        <h5>No hay tickets</h5>
+                        <p class="text-muted">
+                            {% if user.is_developer %}
+                            No hay tickets en el sistema aún.
+                            {% else %}
+                            No tienes tickets creados. Crea tu primer ticket para comenzar.
+                            {% endif %}
+                        </p>
+                        <a href="/new_ticket" class="btn btn-primary">
+                            <i class="fas fa-plus"></i> Crear Primer Ticket
+                        </a>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Estado del Sistema (solo desarrolladores) -->
+        {% if user.is_developer %}
+        <div class="card mt-4">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="fas fa-cogs"></i> Estado del Sistema</h6>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <small><strong>Base de datos:</strong></small><br>
+                        <span class="badge bg-success">{{ system_status.database }}</span>
+                    </div>
+                    <div class="col-md-3">
+                        <small><strong>Google Drive:</strong></small><br>
+                        <span class="badge bg-secondary">{{ system_status.google_drive }}</span>
+                    </div>
+                    <div class="col-md-3">
+                        <small><strong>Email:</strong></small><br>
+                        <span class="badge bg-info">{{ system_status.email }}</span>
+                    </div>
+                    <div class="col-md-3">
+                        <small><strong>Sincronización:</strong></small><br>
+                        <span class="badge bg-secondary">{{ system_status.auto_sync }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Notificaciones Recientes (solo desarrolladores) -->
+        {% if user.is_developer and notifications %}
+        <div class="card mt-4">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="fas fa-bell"></i> Notificaciones Recientes</h6>
+            </div>
+            <div class="card-body">
+                {% for notification in notifications %}
+                <small class="d-block text-muted">{{ notification.strip() }}</small>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Modal para actualizar tickets (solo desarrolladores) -->
+    {% if user.is_developer %}
+    <form id="updateForm" method="POST" action="/update_ticket" style="display: none;">
+        <input type="hidden" name="ticket_id" id="updateTicketId">
+        <input type="hidden" name="status" id="updateStatus">
+        <input type="hidden" name="comment" id="updateComment">
+    </form>
+    {% endif %}
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    
+    {% if user.is_developer %}
+    <script>
+    function updateTicket(ticketId, status) {
+        let message = '';
+        
+        if (status === 'En Progreso') {
+            message = '¿Quieres tomar este ticket?';
+        } else if (status === 'Resuelto') {
+            message = '¿Marcar este ticket como resuelto?';
+        }
+        
+        if (confirm(message)) {
+            document.getElementById('updateTicketId').value = ticketId;
+            document.getElementById('updateStatus').value = status;
+            document.getElementById('updateComment').value = `Ticket ${status.toLowerCase()} por desarrollador`;
+            document.getElementById('updateForm').submit();
+        }
+    }
+    
+    // Auto-refresh cada 30 segundos
+    setTimeout(function() {
+        location.reload();
+    }, 30000);
+    </script>
+    {% endif %}
+</body>
+</html>
