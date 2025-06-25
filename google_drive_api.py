@@ -1,12 +1,14 @@
 """
 Google Drive API Integration for Ticket System - Versión con manejo de errores mejorado
 Sincronización automática de tickets y archivos adjuntos
+OPTIMIZADO: Gestión inteligente de backups y verificación de cambios
 """
 
 import os
 import json
 import sqlite3
 import pickle
+import glob
 from datetime import datetime
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -21,6 +23,7 @@ SCOPES = ['https://www.googleapis.com/auth/drive.file']
 CREDENTIALS_FILE = 'credentials.json'
 TOKEN_FILE = 'token.pickle'
 FOLDER_NAME = 'Sistema-Tickets-Data'
+MAX_BACKUPS = 3  # Máximo número de backups a mantener
 
 class GoogleDriveManager:
     def __init__(self):
@@ -187,6 +190,131 @@ class GoogleDriveManager:
             return False, f"Error HTTP: {e}"
         except Exception as e:
             return False, f"Error: {e}"
+    
+    def get_local_db_hash(self, db_path='tickets.db'):
+        """Obtiene un hash simple del contenido de la base de datos local"""
+        try:
+            if not os.path.exists(db_path):
+                return None
+            
+            # Usar el tamaño y fecha de modificación como "hash" simple
+            stat = os.stat(db_path)
+            return f"{stat.st_size}_{int(stat.st_mtime)}"
+        except Exception as e:
+            print(f"❌ Error obteniendo hash local: {e}")
+            return None
+    
+    def get_drive_db_hash(self):
+        """Obtiene el hash del archivo en Google Drive"""
+        try:
+            if not self.authenticated:
+                return None
+                
+            # Buscar archivo en Drive
+            results = self.service.files().list(
+                q=f"name='tickets.db' and parents='{self.folder_id}' and trashed=false",
+                fields="files(id, size, modifiedTime)"
+            ).execute()
+            
+            files = results.get('files', [])
+            if not files:
+                return None
+            
+            file_info = files[0]
+            # Usar tamaño y fecha de modificación como "hash"
+            size = file_info.get('size', '0')
+            modified_time = file_info.get('modifiedTime', '')
+            
+            # Convertir timestamp de Drive a epoch
+            try:
+                from datetime import datetime
+                import dateutil.parser
+                dt = dateutil.parser.parse(modified_time)
+                epoch_time = int(dt.timestamp())
+                return f"{size}_{epoch_time}"
+            except:
+                return f"{size}_{modified_time}"
+                
+        except Exception as e:
+            print(f"❌ Error obteniendo hash de Drive: {e}")
+            return None
+    
+    def cleanup_old_backups(self):
+        """Limpia backups antiguos, manteniendo solo los más recientes"""
+        try:
+            # Buscar todos los archivos de backup
+            backup_pattern = "tickets_backup_*.db"
+            backup_files = glob.glob(backup_pattern)
+            
+            if len(backup_files) <= MAX_BACKUPS:
+                return  # No hay nada que limpiar
+            
+            # Ordenar por fecha de modificación (más reciente primero)
+            backup_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+            
+            # Eliminar los backups más antiguos
+            files_to_delete = backup_files[MAX_BACKUPS:]
+            
+            for backup_file in files_to_delete:
+                try:
+                    os.remove(backup_file)
+                    print(f"🗑️ Backup eliminado: {backup_file}")
+                except Exception as e:
+                    print(f"❌ Error eliminando backup {backup_file}: {e}")
+                    
+        except Exception as e:
+            print(f"❌ Error limpiando backups: {e}")
+    
+    def should_create_backup(self, db_path='tickets.db'):
+        """Determina si se debe crear un backup basado en cambios reales"""
+        try:
+            # Si no existe DB local, no hay nada que respaldar
+            if not os.path.exists(db_path):
+                return False
+            
+            # Obtener hashes para comparar
+            local_hash = self.get_local_db_hash(db_path)
+            drive_hash = self.get_drive_db_hash()
+            
+            # Si no podemos obtener el hash de Drive, es mejor hacer backup por seguridad
+            if drive_hash is None:
+                print("⚠️ No se pudo obtener información de Drive, creando backup por seguridad")
+                return True
+            
+            # Si los hashes son diferentes, hay cambios reales
+            if local_hash != drive_hash:
+                print(f"📊 Cambios detectados - Local: {local_hash}, Drive: {drive_hash}")
+                return True
+            else:
+                print("ℹ️ No hay cambios en la base de datos, omitiendo backup")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Error verificando necesidad de backup: {e}")
+            return True  # En caso de error, mejor hacer backup por seguridad
+    
+    def create_backup(self, db_path='tickets.db'):
+        """Crea un backup de la base de datos local con gestión inteligente"""
+        try:
+            if not os.path.exists(db_path):
+                return None
+            
+            # Limpiar backups antiguos primero
+            self.cleanup_old_backups()
+            
+            # Crear nuevo backup
+            backup_path = f"tickets_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+            
+            # Copiar archivo en lugar de renombrar para no perder el original
+            import shutil
+            shutil.copy2(db_path, backup_path)
+            
+            print(f"📁 Backup creado: {backup_path}")
+            return backup_path
+            
+        except Exception as e:
+            print(f"❌ Error creando backup: {e}")
+            return None
     
     def upload_database(self, db_path='tickets.db'):
         """Sube la base de datos a Google Drive"""
@@ -378,7 +506,7 @@ class GoogleDriveManager:
             return False
     
     def sync_tickets_from_drive(self):
-        """Sincroniza datos desde Google Drive"""
+        """Sincroniza datos desde Google Drive con gestión inteligente de backups"""
         try:
             if not self.authenticated:
                 print("⚠️ Google Drive no autenticado")
@@ -390,14 +518,18 @@ class GoogleDriveManager:
                 print(f"❌ Error de conexión: {message}")
                 return False
             
-            # Verificar si hay datos más recientes en Drive
-            if self.check_drive_has_newer_data():
-                # Hacer backup de datos locales
-                backup_path = f"tickets_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-                if os.path.exists('tickets.db'):
-                    os.rename('tickets.db', backup_path)
-                    print(f"📁 Backup creado: {backup_path}")
-                
+            # Verificar si realmente necesitamos hacer backup y sincronizar
+            if not self.should_create_backup():
+                print("ℹ️ Los datos locales están actualizados, no se necesita sincronización")
+                return True
+            
+            # Solo hacer backup si realmente hay cambios
+            backup_path = self.create_backup()
+            if not backup_path:
+                print("❌ No se pudo crear backup, abortando sincronización")
+                return False
+            
+            try:
                 # Descargar datos de Drive
                 success = self.download_database()
                 
@@ -407,42 +539,40 @@ class GoogleDriveManager:
                 else:
                     # Restaurar backup si falla
                     if os.path.exists(backup_path):
-                        os.rename(backup_path, 'tickets.db')
-                        print("🔄 Backup restaurado")
+                        import shutil
+                        shutil.copy2(backup_path, 'tickets.db')
+                        print("🔄 Backup restaurado debido a error en descarga")
                     return False
-            else:
-                print("ℹ️ Los datos locales están actualizados")
-                return True
+                    
+            except Exception as e:
+                print(f"❌ Error durante descarga: {e}")
+                # Restaurar backup
+                if os.path.exists(backup_path):
+                    import shutil
+                    shutil.copy2(backup_path, 'tickets.db')
+                    print("🔄 Backup restaurado debido a error")
+                return False
                 
         except Exception as e:
             print(f"❌ Error en sincronización desde Drive: {e}")
             return False
     
     def check_drive_has_newer_data(self):
-        """Verifica si Google Drive tiene datos más recientes"""
+        """Verifica si Google Drive tiene datos más recientes - MEJORADO"""
         try:
-            # Buscar archivo en Drive
-            results = self.service.files().list(
-                q=f"name='tickets.db' and parents='{self.folder_id}' and trashed=false",
-                fields="files(id, modifiedTime)"
-            ).execute()
+            local_hash = self.get_local_db_hash()
+            drive_hash = self.get_drive_db_hash()
             
-            files = results.get('files', [])
+            # Si no hay archivo local, Drive tiene datos "más nuevos"
+            if local_hash is None:
+                return drive_hash is not None
             
-            if not files:
+            # Si no hay archivo en Drive, local es más reciente
+            if drive_hash is None:
                 return False
             
-            # Comparar fechas de modificación
-            drive_modified = files[0]['modifiedTime']
-            
-            if not os.path.exists('tickets.db'):
-                return True
-            
-            local_modified = datetime.fromtimestamp(
-                os.path.getmtime('tickets.db')
-            ).isoformat() + 'Z'
-            
-            return drive_modified > local_modified
+            # Comparar hashes
+            return local_hash != drive_hash
             
         except Exception as e:
             print(f"❌ Error verificando fechas: {e}")
@@ -502,11 +632,17 @@ class GoogleDriveManager:
             last_sync = result[0] if result else 'Nunca'
             conn.close()
             
+            # Obtener información de backups
+            backup_files = glob.glob("tickets_backup_*.db")
+            backup_count = len(backup_files)
+            
             return {
                 'status': 'Conectado',
                 'folder_id': self.folder_id,
                 'last_sync': last_sync,
-                'folder_name': FOLDER_NAME
+                'folder_name': FOLDER_NAME,
+                'backup_count': backup_count,
+                'max_backups': MAX_BACKUPS
             }
             
         except Exception as e:
@@ -538,9 +674,20 @@ if __name__ == "__main__":
         success, message = drive.test_connection()
         print(f"🔍 Test de conexión: {message}")
         
+        # Mostrar información de backups
+        backup_files = glob.glob("tickets_backup_*.db")
+        print(f"📁 Backups existentes: {len(backup_files)}")
+        for backup in backup_files:
+            print(f"   - {backup}")
+        
         # Probar sincronización
         if os.path.exists('tickets.db'):
             print("🔄 Probando sincronización...")
+            
+            # Probar verificación de cambios
+            needs_backup = drive.should_create_backup()
+            print(f"📊 ¿Necesita backup?: {needs_backup}")
+            
             success = drive.sync_tickets_to_drive()
             if success:
                 print("✅ Sincronización exitosa!")

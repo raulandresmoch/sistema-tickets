@@ -1,0 +1,7 @@
+#ignorar entrono virtual
+
+venv/
+
+#Archivos temporales de python
+
+__pycache__/
